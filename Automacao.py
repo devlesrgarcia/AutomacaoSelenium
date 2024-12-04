@@ -15,14 +15,15 @@ import pandas as pd
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 import csv
+import unicodedata
 
-# Conectar ao MongoDB localmente
-cliente = MongoClient('mongodb://localhost:27017/')
-banco_dados = cliente['logs_db']
-colecao = banco_dados['install_logs']
+#################### conexao mongodb
+client = MongoClient('mongodb://localhost:27017/')
+bd = client['logs_db']
+colecao = bd['install_logs']
 
-# Função para registrar eventos no MongoDB
-def registrar_evento(evento, status, detalhes=""):
+#################### função log 
+def logs(evento, status, detalhes=""):
     log = {
         "timestamp": datetime.now(),
         "evento": evento,
@@ -32,41 +33,42 @@ def registrar_evento(evento, status, detalhes=""):
     colecao.insert_one(log)
     print(f"Log registrado: {evento}, Status: {status}")
 
-# Função para instalar automaticamente o Python com privilégios elevados
+#################### install python
 def instalar_python(caminho_instalador):
     try:
         subprocess.run(['runas', '/user:Administrator', caminho_instalador, '/quiet', 'InstallAllUsers=1', 'PrependPath=1'], check=True)
-        registrar_evento("Execução da Instalação", "sucesso", "Instalação do Python iniciada com sucesso.")
-        print("Instalação do Python concluída com sucesso!")
+        logs("Execução da Instalação", "sucesso", "Instalação iniciada.")
+        print("Instalação do Python concluída!")
     except subprocess.CalledProcessError as e:
-        registrar_evento("Execução da Instalação", "erro", str(e))
+        logs("Execução da Instalação", "erro", str(e))
         print(f"Erro na execução da instalação: {e}")
 
-# Função para validar a instalação do Python
-def validar_instalacao_python():
+#################### validador da versao
+def valida_versao():
     try:
         resultado = subprocess.run([sys.executable, "--version"], capture_output=True, text=True)
         versao_python = resultado.stdout.strip()
-        registrar_evento("Verificação da Versão Instalado", "sucesso", f"Versão instalada: {versao_python}")
+        logs("Verificação da Versão", "sucesso", f"Versão instalada: {versao_python}")
         print(f"Versão instalada do Python: {versao_python}")
         
         if "Python 3.12.7" in versao_python:
-            print("Instalação validada com sucesso!")
+            print("Instalação validada")
         else:
-            print("A versão instalada não é a esperada.")
+            print("A versão instalada não é a 3.12.7")
     except FileNotFoundError:
-        registrar_evento("Verificação da Versão Instalado", "erro", "Python não encontrado.")
-        print("Python não foi encontrado. A instalação pode ter falhado.")
+        logs("Verificação da Versão", "erro", "Python não encontrado.")
+        print("Python não foi encontrado.")
 
-# Instala e configura automaticamente o ChromeDriver
+#################### detecta o chrome driver
 chromedriver_autoinstaller.install()
 
-# Configurações do navegador
+#################### configuraçoes para abrir na janela| o headless é para executar sem abrir janeja
 opcoes_chrome = Options()
 opcoes_chrome.add_argument("--start-maximized")
+opcoes_chrome.add_argument("--headless")
 driver = webdriver.Chrome(options=opcoes_chrome)
 
-# Acessa o Google e realiza a pesquisa para o download do Python
+#################### acessar o google/python.org e fazer o download
 driver.get("https://www.google.com")
 driver.find_element(By.NAME, "q").send_keys("download python", Keys.RETURN)
 time.sleep(5)
@@ -77,7 +79,7 @@ time.sleep(5)
 driver.find_element(By.XPATH, '//a[contains(text(), "Python 3.12.7")]').click()
 time.sleep(10)
 
-# Obtém o link de download do instalador do Python e faz o download
+#################### obtem o link e usa o request para baixar
 link_download = driver.find_element(By.XPATH, '//a[contains(text(), "Windows installer (64-bit)")]').get_attribute("href")
 resposta = requests.get(link_download)
 diretorio_download = os.path.join(os.environ["USERPROFILE"], "Downloads")
@@ -86,90 +88,95 @@ caminho_arquivo = os.path.join(diretorio_download, "python_installer.exe")
 with open(caminho_arquivo, "wb") as arquivo:
     arquivo.write(resposta.content)
 
-registrar_evento("Baixa do Executável", "sucesso", f"Arquivo salvo em: {caminho_arquivo}")
+logs("Baixa python", "sucesso", f"Arquivo salvo em: {caminho_arquivo}")
 print(f"Download iniciado! Arquivo salvo em: {caminho_arquivo}")
 
-# Espera para garantir que o download foi concluído
+#################### tempo para garantir que sera concluido o download
 time.sleep(5)
 
-# Instala o Python com permissões elevadas
+#################### chama a funçao de instalacao
 instalar_python(caminho_arquivo)
 
-# Valida a instalação do Python
-validar_instalacao_python()
+#################### funçao validador
+valida_versao()
 
-# Fecha o navegador
+#################### finaliza o navegador
 driver.quit()
 
-# Função para extrair dados da página web
-def extrair_dados_da_web():
-    url = 'https://books.toscrape.com'
-    resposta = requests.get(url)
-    sopa = BeautifulSoup(resposta.text, 'html.parser')
+#################### funçao para webscraping
+def extrair_dados():
+    soap = BeautifulSoup(requests.get('https://books.toscrape.com').text, 'html.parser')  
+    dados = []
     
-    dados_livros = []
-    
-    # Extraindo informações de cada livro na página
-    for livro in sopa.find_all('article', class_='product_pod'):
+#################### manipular a pagina html para poder manipular
+    for livro in soap.find_all('article', class_='product_pod'):
         titulo = livro.find('h3').find('a')['title']
+#################### formatando o dinheiro
         preco = livro.find('p', class_='price_color').text
+        preco = unicodedata.normalize('NFKD', preco).strip().replace('AÌ', '').replace('£', 'R$')
         avaliacao = livro.find('p', class_='star-rating')['class'][1]
         disponibilidade = livro.find('p', class_='instock availability').text.strip()
-        
-        dados_livros.append([titulo, preco, avaliacao, disponibilidade])
-    
-    salvar_em_csv(dados_livros)
+#################### mudando o in stock para         
+        if "In stock" in disponibilidade:
+            quantidade = disponibilidade.split()[-1]
+            disponibilidade = f"Em estoque: {quantidade}"
 
-# Função para salvar os dados extraídos em CSV
-def salvar_em_csv(dados):
-    caminho_arquivo = 'dados_livros.csv'
-    
-    with open(caminho_arquivo, 'w', newline='', encoding='utf-8') as arquivo:
-        escritor = csv.writer(arquivo)
-        escritor.writerow(['Título', 'Preço', 'Avaliação', 'Disponibilidade'])
-        escritor.writerows(dados)
-    
-    print(f'Dados salvos em: {caminho_arquivo}')
+        dados.append([titulo, preco, avaliacao, disponibilidade])
+#################### chama a funçao salvar com a lista dos dados    
+    salvar_csv(dados)
 
-# Função para manipular os dados (filtros, agregações)
+#################### funcao de salvamento
+def salvar_csv(dados):
+    nome = 'livros.csv'
+    
+    with open(nome, 'w', newline='', encoding='utf-8') as arquivo:
+        w = csv.writer(arquivo)
+        w.writerow(['Título', 'Preço', 'Avaliação', 'Disponibilidade'])
+        w.writerows(dados)
+    
+    print(f'Dados salvos em: {nome}')
+
+#################### funcao etl (filtros, agregações)
 def manipular_dados():
-    df = pd.read_csv('dados_livros.csv')
-    
-    dados_filtrados = df[df['Avaliação'] == 'Five']
+    df = pd.read_csv('livros.csv')
+#################### filtrando apenas os livros com nota 5    
+    df_modificado = df[df['Avaliação'] == 'Five']
+#################### estou limpando os dados da coluna preco
+    df_modificado['Preço'] = (df_modificado['Preço'].str.replace('AÌ‚', '', regex=False).str.strip())
     
     contagem_disponibilidade = df['Disponibilidade'].value_counts()
     
-    print(f'Dados filtrados por avaliação "Five":\n{dados_filtrados}')
-    print(f'Contagem de livros por disponibilidade:\n{contagem_disponibilidade}')
+    print(f'Filtrados por avaliação "Five":\n{df_modificado}')
+    print(f'Contagem de livros por disponiveis:\n{contagem_disponibilidade}')
     
-    gerar_relatorio_pdf(dados_filtrados, contagem_disponibilidade)
+    criar_pdf(df_modificado, contagem_disponibilidade)
 
-# Função para gerar o relatório em PDF
-def gerar_relatorio_pdf(dados_filtrados, contagem_disponibilidade):
-    # Criar o arquivo PDF
-    caminho_arquivo = 'relatorio_livros.pdf'
-    c = canvas.Canvas(caminho_arquivo, pagesize=letter)
-    c.setFont("Helvetica", 10)
-    
-    # Título do relatório
+#################### funcao para gerar o PDF
+def criar_pdf(dados_filtrados, contagem_disponibilidade):
+#################### caminho pdf
+    nome = 'pdf_livros.pdf'
+#################### configuracoes do pdf    
+    c = canvas.Canvas(nome, pagesize=letter)
+    c.setFont("Helvetica", 10)    
+#################### titulo
     c.setFont("Helvetica-Bold", 14)
     c.drawString(100, 750, "Relatório de Livros - Books to Scrape")
     c.setFont("Helvetica", 10)
     c.drawString(100, 735, f"Data: {time.strftime('%Y-%m-%d')}")
     
-    # Tabela com os dados filtrados (livros com avaliação 'Five')
+#################### informacao dos livros
     y_position = 700
     c.setFont("Helvetica-Bold", 12)
     c.drawString(100, y_position, "Livros com avaliação 'Five':")
     y_position -= 15
     
-    # Exibe os dados dos livros filtrados com avaliação 'Five'
+#################### faz um for para pegar todos os livros com avaliacao 5
     for i, linha in dados_filtrados.iterrows():
         c.setFont("Helvetica", 10)
         c.drawString(100, y_position, f"Título: {linha['Título']}, Preço: {linha['Preço']}, Avaliação: {linha['Avaliação']}")
         y_position -= 15
     
-    # Evita que ultrapasse o limite da página
+#################### trava para nao passar do limite da pagina
     if y_position < 100:
         c.showPage()
         y_position = 750
@@ -177,23 +184,23 @@ def gerar_relatorio_pdf(dados_filtrados, contagem_disponibilidade):
         c.drawString(100, y_position, "Contagem de livros por disponibilidade:")
         y_position -= 15
     
-    # Adicionar a contagem de disponibilidade
+#################### por ultimo a contagem de livros em estoque
     c.setFont("Helvetica", 10)
     for index, count in contagem_disponibilidade.items():
         c.drawString(100, y_position, f"{index}: {count}")
         y_position -= 15
     
-    # Salvar o PDF
+#################### salvar
     c.save()
-    print(f'Relatório gerado: {caminho_arquivo}')
+    print(f'PDF gerado: {nome}')
 
-# Função principal para orquestrar o processo
-def principal():
+#################### funcao main
+def main():
     print("Iniciando a extração de dados...")
-    extrair_dados_da_web()
+    extrair_dados()
     print("Manipulando dados e gerando relatório...")
     manipular_dados()
 
-# Chama a função principal
+#################### chama a funcao main
 if __name__ == "__main__":
-    principal()
+    main()
